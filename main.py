@@ -1,103 +1,65 @@
 import os
 import json
-import asyncio
+import sys
+import datetime
 import traceback
-import nest_asyncio
-
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+from oauth2client.service_account import ServiceAccountCredentials
 import gspread
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from googleapiclient.discovery import build
 
-# -------------------------------------------------------
-# 🔧 APLICAÇÃO DE PATCH PARA LOOP ASYNCIO NO RENDER
-# -------------------------------------------------------
-nest_asyncio.apply()
+# =========================
+# Carrega variáveis de ambiente
+# =========================
+def carregar_variaveis():
+    print("\n🔍 Verificando variáveis de ambiente...")
 
-# -------------------------------------------------------
-# 🔑 CARREGAMENTO DAS CREDENCIAIS DO GOOGLE
-# -------------------------------------------------------
+    TOKEN_TELEGRAM = os.getenv("TOKEN_TELEGRAM")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
+
+    if not TOKEN_TELEGRAM:
+        print("❌ ERRO: Variável TOKEN_TELEGRAM não encontrada!")
+    else:
+        print("✅ TOKEN_TELEGRAM carregado.")
+
+    if not GEMINI_API_KEY:
+        print("❌ ERRO: Variável GEMINI_API_KEY não encontrada!")
+    else:
+        print("✅ GEMINI_API_KEY carregado.")
+
+    if not GOOGLE_CREDENTIALS:
+        print("❌ ERRO: Variável GOOGLE_CREDENTIALS não encontrada!")
+    else:
+        print("✅ GOOGLE_CREDENTIALS carregado (conteúdo omitido por segurança).")
+
+    if not all([TOKEN_TELEGRAM, GEMINI_API_KEY, GOOGLE_CREDENTIALS]):
+        print("\n⚠️ Algumas variáveis estão ausentes. Corrija-as no painel do Render antes de continuar.\n")
+        sys.exit(1)
+
+    return TOKEN_TELEGRAM, GEMINI_API_KEY, GOOGLE_CREDENTIALS
+
+# Carrega as variáveis
+TOKEN_TELEGRAM, GEMINI_API_KEY, GOOGLE_CREDENTIALS = carregar_variaveis()
+
+# =========================
+# Configura credenciais Google
+# =========================
 try:
-    google_credentials_json = os.getenv("GOOGLE_CREDENTIALS")
-    if not google_credentials_json:
-        raise RuntimeError("⚠️ Variável GOOGLE_CREDENTIALS não encontrada!")
+    print("\n🔑 Configurando autenticação Google...")
+    creds_json = json.loads(GOOGLE_CREDENTIALS)
 
-    credentials_dict = json.loads(google_credentials_json)
-    credentials = service_account.Credentials.from_service_account_info(
-        credentials_dict,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/calendar",
-        ],
-    )
+    SCOPES = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/calendar.events"
+    ]
 
-    sheets_client = gspread.authorize(credentials)
-    calendar_service = build("calendar", "v3", credentials=credentials)
-
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, SCOPES)
+    gc = gspread.authorize(creds)
+    calendar_service = build("calendar", "v3", credentials=creds)
     print("✅ Conectado ao Google (Planilhas + Calendário)")
+
 except Exception as e:
-    print("❌ Erro ao autenticar Google:", e)
+    print("❌ Erro ao conectar ao Google. Verifique as credenciais.")
     traceback.print_exc()
-    raise SystemExit(1)
-
-# -------------------------------------------------------
-# 💬 CONFIGURAÇÃO DO TELEGRAM
-# -------------------------------------------------------
-TOKEN_TELEGRAM = os.getenv("TOKEN_TELEGRAM")
-if not TOKEN_TELEGRAM:
-    raise RuntimeError("⚠️ Variável TOKEN_TELEGRAM não encontrada!")
-
-# -------------------------------------------------------
-# 🤖 LÓGICA DO BOT
-# -------------------------------------------------------
-async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Responde a mensagens recebidas no Telegram."""
-    try:
-        texto_usuario = update.message.text.strip().lower()
-
-        if "oi" in texto_usuario or "olá" in texto_usuario:
-            await update.message.reply_text("👋 Olá! Eu sou o assistente de estoque.")
-        elif "estoque" in texto_usuario:
-            await update.message.reply_text("📦 Consultando estoque...")
-            # Exemplo de leitura de planilha:
-            try:
-                planilha = sheets_client.open("Controle de Estoque").sheet1
-                dados = planilha.get_all_records()
-                await update.message.reply_text(f"Encontrei {len(dados)} itens na planilha.")
-            except Exception as e:
-                await update.message.reply_text(f"Erro ao acessar planilha: {e}")
-        else:
-            await update.message.reply_text("🤖 Não entendi, tente algo como 'ver estoque'.")
-
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Ocorreu um erro: {e}")
-        traceback.print_exc()
-
-# -------------------------------------------------------
-# 🚀 INICIALIZAÇÃO DO BOT
-# -------------------------------------------------------
-async def main():
-    print("🚀 Inicializando bot...")
-    app = ApplicationBuilder().token(TOKEN_TELEGRAM).build()
-
-    # Adiciona o handler principal
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-
-    print("🤖 Assistente de Estoque IA v2.2 rodando. Fale com o bot no Telegram.")
-    await app.run_polling(close_loop=False)
-
-# -------------------------------------------------------
-# ▶️ EXECUÇÃO PRINCIPAL
-# -------------------------------------------------------
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print("❌ Erro ao iniciar:", e)
-        traceback.print_exc()
+    sys.exit(1)
