@@ -194,4 +194,11 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import nest_asyncio
+    nest_asyncio.apply()
+
+    try:
+        asyncio.get_event_loop().run_until_complete(main())
+    except Exception as e:
+        print("Erro ao iniciar:", e)
+
