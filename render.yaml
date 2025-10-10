@@ -1,0 +1,10 @@
+services:
+  - type: worker
+    name: estoque-bot
+    env: python
+    buildCommand: ""
+    startCommand: "python main.py"
+    plan: free
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"

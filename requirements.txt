@@ -1,0 +1,6 @@
+python-telegram-bot==20.8
+google-generativeai
+gspread
+oauth2client
+google-api-python-client
+nest_asyncio

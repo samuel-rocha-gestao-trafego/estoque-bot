@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "bot-deposito-de-bebidas",
+  "private_key_id": "fba8ac86ed916e2b5434d3d3109dc85e364a4128",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCnC6vC/T4Klm8M\nMor8IR6cQs2O0v7D7i2eRxPvzCSLZ0f3hD+54OvcEwauxx/LnLRCwBNM73pnZvkP\nAkZWMdpi9dTGDUwxDK215ZNOjw/sDkapqo73RvcrxRUMHYRzl2GSmI7p6dOAvQX7\nEHFZZVDKD6lpxbpUuxPmii14c7mbLrN+6h3DqgjTp6M0adfDS5Jj+hR59CrXmQoh\n0Gki24j2l/hE83LQskBZDskkQonRA6Qy7bgIQYsauElxDTVT1RafNOriI2I0ZVnN\n7/IwJ593cTOW7gLJu4UgGjo/sdttmjwTk1DS3IjJO9klJz9vvt87rKCU01Ath8DR\nR6SDHdwnAgMBAAECggEATWsRzFl89wA4cDE+i9K3spkdVpvAOkM5PjlX6pO0viz8\nRCE1PasZ9NGWj8s2l7HFM4h8iXQVyTWGqWeW/Jy3R5UCa1W/YZ4sJfjD2C1ipjcJ\nldm3z6/CnzUEZ6yIdeALdxsgZRWbEffI/U5mEhXsJvGyRRTAIkPf2cFhiIkt1NbE\nsxzX+P/ihDtuIHNAHOjzeWhZJ8j3q5tgwfQC/EnadKBEF67U0q+UDIG7sIOWzmiS\nCU/3+d3PugCnZaxMMc/ZtMgg8QuOWlpZRQC+B+QN/HXKCV1gMewDN4AmOLco360D\nZPJ+wCzNdjhf0Yu9UtZS33AezSCrkpobVU0ZM4VkWQKBgQDYoELHyO/BBufOtaWm\nWahkZCjY2AxEJlhkALy2P3n2QnhvdqR01JymdX1WlhT31rvmTau68XpOO79ySU1v\nVMSvXcAmgu2SwqQfYRK0bDOJ477+2RhIbMY+LRaLBDPW687/e0PMAMbeSX1uCqVC\n2R1l9XHpfjnZkKEj98cXVv7HeQKBgQDFaGcgqaS4ccLQnWrTf3MXqTeNnUcTM7/B\nKz9tA6V7mxJ1yaK6bT2eAFPjlilcm+q7CyOgicGOZoTAswKKRH8xyxFoMXk3of44\nJHSreg+aos5QlEmuYkQpXZApuTUBfsgdBtdyONFlEvbMwXLWdSogNY/v2w2Ve9wo\nZj+iykm4nwKBgQCARqZE19/hVc1+wmHNF9p3WDg37/eTg4Fj9mvJH92AzeuzVXYd\nGKmKiJgn5ceU2zt5LRU8JjJekVLUwkNwYan2jnVyWKWF+mxliH4jCM+cH5jCIJwY\nhxD9UIXA3EQ2SHzTHJMRAoTArJPxzav+4cJe1fEWawCmrNY/DkJ+t603QQKBgGvd\nikw8pfbqokqfWVnLkDXjjqlgwQ9q/WItoXCNx4RszX9y9+np+vs0rqHy0RL7Vx1x\nDryPySVoOy2YItEucFni3dYTAms1ptVChkWUYqZaQ2WgQUp6A0ifCUDjJGV2wx2p\nOVv+U9xoqlZjdb5dMvF6kvW6ugduMHQaurbW1cV9AoGBAIuJz40tVRYByADuM2UF\nVPmYQY5yEMimNN5ddrCxCkHJAd1vn+6rKJ2a40CNN5Pcnc4EF1WfzHdxZVTtHJMC\nlXKO4q4Rk0Xf4IBlYRdvCUUVf0Gs1z6JD81PYMROJzCI7DXMpOBUKEhMsBKhEA4L\ndqikMoRyG1FWHXjdEkjM8WYU\n-----END PRIVATE KEY-----\n",
+  "client_email": "gspread-bot@bot-deposito-de-bebidas.iam.gserviceaccount.com",
+  "client_id": "113267673974315024392",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/gspread-bot%40bot-deposito-de-bebidas.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
