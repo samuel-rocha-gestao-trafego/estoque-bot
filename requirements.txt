@@ -8,5 +8,5 @@ requests
 python-dotenv
 google-generativeai
 gspread
-gunicorn
-gevent
+gunicorn  # Servidor WSGI/ASGI de produção
+gevent    # Worker assíncrono para Gunicorn
