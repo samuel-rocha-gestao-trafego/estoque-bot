@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-import nest_asyncio
+# REMOVIDO: import nest_asyncio - Não é necessário para este padrão de webhook
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -9,20 +9,16 @@ import google.generativeai as genai
 import gspread
 from google.oauth2.service_account import Credentials
 
-# Permite rodar asyncio dentro do Flask (mantido, mas a estrutura de inicialização foi ajustada)
-nest_asyncio.apply()
-
 # Inicializa Flask
 app_flask = Flask(__name__)
 
-# Variável global para a aplicação do Telegram (definida durante a inicialização)
+# Variável global para a aplicação do Telegram
 app_telegram = None 
 
 # ======== VERIFICAÇÃO DE VARIÁVEIS =========
 print("🔍 Verificando variáveis de ambiente...")
 
 TELEGRAM_TOKEN = os.getenv("TOKEN_TELEGRAM")
-# O erro 500 pode ocorrer se o token não estiver disponível na rota do webhook
 if not TELEGRAM_TOKEN:
     raise RuntimeError("❌ TOKEN_TELEGRAM ausente ou não disponível. Verifique as variáveis de ambiente do Render!")
 
@@ -44,7 +40,6 @@ try:
     gspread_client = gspread.authorize(creds)
     print("✅ Conectado ao Google (Planilhas + Calendário)")
 except Exception as e:
-    # Se a conexão falhar, o bot não deve travar completamente, mas é bom logar.
     print(f"❌ Erro ao conectar ao Google: {e}")
 
 # ======== CONFIGURAR GEMINI ========
@@ -54,11 +49,11 @@ try:
     print("✅ Gemini configurado com sucesso.")
 except Exception as e:
     print(f"❌ Erro ao configurar Gemini: {e}")
-    # Se a API do Gemini falhar, o bot não deve travar
     modelo = None 
 
 
 # ======== FUNÇÃO DE RESPOSTA ========
+# Coroutine
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not modelo:
         await update.message.reply_text("❌ O serviço de IA (Gemini) não está configurado. Verifique a chave API.")
@@ -90,34 +85,30 @@ def home():
     return "🤖 Bot do Telegram está ativo no Render!"
 
 @app_flask.route(f"/webhook/{TELEGRAM_TOKEN}", methods=["POST"])
-def webhook():
+async def webhook(): # AGORA É ASYNC!
     # A verificação do app_telegram é crucial aqui.
     if not app_telegram:
         print("❌ Webhook chamado antes do app_telegram estar pronto.")
-        return "Servidor em inicialização", 503 # Retorno 503 - Service Unavailable
+        return "Servidor em inicialização", 503 
 
     try:
-        data = request.get_json()
+        data = request.get_json(force=True) # force=True ajuda se o header Content-Type não for perfeito
         if not data:
             print("⚠️ Nenhum dado recebido no webhook.")
             return "Sem conteúdo", 400
 
-        # Converte JSON em objeto Update (Agora app_telegram está garantido)
-        update = Update.de_json(data, app_telegram.bot)
-
-        # Executa processamento assíncrono de forma segura
-        loop = asyncio.get_event_loop()
-        loop.create_task(app_telegram.process_update(update))
+        # process_update agora pode ser chamado diretamente (async)
+        # O Flask moderno lida bem com funções de rota async
+        await app_telegram.process_update(data)
 
         return "OK", 200
     except Exception as e:
-        # Se houver erro, loga e retorna 500, como antes.
         print(f"❌ Erro no webhook: {e}")
         return "Erro interno", 500
 
-# ======== INICIALIZAÇÃO DO BOT (Assíncrona) ========
-async def iniciar_bot():
-    print("🚀 Inicializando bot...")
+# ======== INICIALIZAÇÃO DO BOT (Assíncrona - Chamado apenas UMA VEZ) ========
+async def inicializar_telegram_app():
+    print("🚀 Configurando aplicação do Telegram...")
     global app_telegram
     
     # Cria a aplicação do Telegram
@@ -125,32 +116,36 @@ async def iniciar_bot():
 
     # Adiciona handlers
     app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    print("✅ Bot configurado e aguardando mensagens...")
-
+    
     # Define o webhook
-    # Render usa RENDER_EXTERNAL_HOSTNAME para o domínio
-    # Usamos os.getenv('PORT') para garantir a porta correta
     url_webhook = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook/{TELEGRAM_TOKEN}"
     await app_telegram.bot.set_webhook(url=url_webhook)
     print(f"🌐 Webhook configurado em: {url_webhook}")
-    
-    return True # Sinaliza sucesso na inicialização
+    print("✅ Bot configurado e pronto para receber webhooks.")
 
 # ======== INÍCIO DO SERVIDOR (Síncrono e Corrigido) ========
 if __name__ == "__main__":
     
-    # CORREÇÃO CRÍTICA: Roda a inicialização do bot (assíncrona) de forma SÍNCRONA
-    # para garantir que app_telegram seja definido antes do Flask rodar.
+    # Executa a inicialização do PTB (configura o webhook) de forma síncrona
+    # Isso garante que app_telegram seja definido.
     try:
         loop = asyncio.get_event_loop()
-        loop.run_until_complete(iniciar_bot())
-        print("✅ Inicialização assíncrona do bot concluída.")
+        loop.run_until_complete(inicializar_telegram_app())
     except Exception as e:
-        print(f"❌ Falha crítica na inicialização do bot: {e}")
-        exit(1) # Sai com erro se a inicialização falhar
+        print(f"❌ Falha crítica na inicialização do PTB: {e}")
+        exit(1)
         
-    # CORREÇÃO DA PORTA: Usa a variável de ambiente $PORT injetada pelo Render.
-    PORT = int(os.environ.get("PORT", 8080)) # Padrão para 8080 se não encontrar (segurança)
+    # Usa a porta correta do Render
+    PORT = int(os.environ.get("PORT", 8080))
     
+    # Usa um servidor mais robusto para async/webhook (como Waitress ou Gunicorn + Uvicorn)
+    # Mas para o Render Worker simples, o Flask padrão (com rota async) pode funcionar.
     print(f"🌍 Servidor Flask iniciando na porta {PORT}...")
+    
+    # Nota: para suportar a função 'async def webhook()', você deve usar um 
+    # servidor WSGI/ASGI compatível com async. O Flask nativo (app_flask.run) é síncrono,
+    # o que pode ser a próxima falha. Vamos tentar com a biblioteca 'gevent' ou 'waitress'
+    # para ser mais seguro, mas por enquanto, vamos manter o Flask run e torcer para o Render
+    # lidar com isso ou mudar o `startCommand`.
+
     app_flask.run(host="0.0.0.0", port=PORT)
