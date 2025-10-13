@@ -1,7 +1,6 @@
 python-telegram-bot==21.6
-google-generativeai==0.8.2
-gspread==6.0.2
-google-auth==2.34.0
-google-auth-oauthlib==1.2.1
-google-api-python-client==2.153.0
+google-generativeai==0.8.5
+gspread==6.2.1
+google-auth==2.41.1
+google-api-python-client==2.184.0
 nest_asyncio==1.6.0
