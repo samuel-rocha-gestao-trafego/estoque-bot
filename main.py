@@ -1,24 +1,17 @@
 import os
-import asyncio
 import nest_asyncio
-from flask import Flask
 import google.generativeai as genai
 import gspread
+from flask import Flask, request
 from google.oauth2.service_account import Credentials
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # ========= VARIÁVEIS DE AMBIENTE =========
 TOKEN_TELEGRAM = os.getenv("TOKEN_TELEGRAM")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
-
-if not TOKEN_TELEGRAM:
-    print("⚠️ TOKEN_TELEGRAM não encontrado no ambiente!")
-if not GEMINI_API_KEY:
-    print("⚠️ GEMINI_API_KEY não encontrada!")
-if not GOOGLE_CREDENTIALS:
-    print("⚠️ GOOGLE_CREDENTIALS não encontrada!")
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://estoque-bot-1.onrender.com")
 
 # ========= GOOGLE =========
 try:
@@ -41,31 +34,36 @@ except Exception as e:
 
 # ========= TELEGRAM =========
 nest_asyncio.apply()
+app_telegram = Application.builder().token(TOKEN_TELEGRAM).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Olá! 🤖 O bot está rodando com sucesso no Render!")
+    await update.message.reply_text("Olá 👋! Seu bot está ativo no Render com webhook!")
 
-async def main():
-    if not TOKEN_TELEGRAM:
-        raise ValueError("⚠️ Você deve passar o TOKEN_TELEGRAM válido!")
-    app = ApplicationBuilder().token(TOKEN_TELEGRAM).build()
-    app.add_handler(CommandHandler("start", start))
-    print("🚀 Inicializando bot Telegram...")
-    await app.run_polling()
+app_telegram.add_handler(CommandHandler("start", start))
 
-# ========= FLASK KEEP-ALIVE =========
+# ========= FLASK (WEBHOOK) =========
 server = Flask(__name__)
 
 @server.route("/")
 def home():
-    return "✅ Bot do Telegram ativo no Render!"
+    return "✅ Bot ativo via Webhook!"
 
-def start_flask():
-    port = int(os.environ.get("PORT", 8080))
-    print(f"🌐 Servidor Flask rodando na porta {port}")
-    server.run(host="0.0.0.0", port=port)
+@server.route(f"/webhook/{TOKEN_TELEGRAM}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), app_telegram.bot)
+    app_telegram.update_queue.put_nowait(update)
+    return "ok", 200
+
+async def setup_webhook():
+    webhook_url = f"{RENDER_URL}/webhook/{TOKEN_TELEGRAM}"
+    await app_telegram.bot.set_webhook(url=webhook_url)
+    print(f"🌐 Webhook configurado em: {webhook_url}")
 
 if __name__ == "__main__":
+    import asyncio
     loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    start_flask()
+    loop.run_until_complete(setup_webhook())
+
+    port = int(os.environ.get("PORT", 8080))
+    print(f"🚀 Servidor Flask ativo na porta {port}")
+    server.run(host="0.0.0.0", port=port)
