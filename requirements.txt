@@ -8,5 +8,5 @@ requests
 python-dotenv
 google-generativeai
 gspread
-gunicorn  # Adicionado!
-gevent    # Adicionado!
+gunicorn
+gevent
