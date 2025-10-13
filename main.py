@@ -2,7 +2,8 @@ import os
 import json
 import asyncio
 from flask import Flask, request
-from telegram import Bot, Update # <<< CORREÇÃO AQUI
+# Importa Bot, Update e ContextTypes necessários
+from telegram import Bot, Update 
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 import google.generativeai as genai
 import gspread
@@ -16,7 +17,7 @@ app_telegram = None
 modelo = None
 gspread_client = None
 
-# ======== FUNÇÃO DE SETUP (Síncrona) - Versão 5.0 ========
+# ======== FUNÇÃO DE SETUP (Síncrona) - Versão 6.0 ========
 def setup_application():
     global app_telegram, modelo, gspread_client
     
@@ -53,11 +54,10 @@ def setup_application():
     except Exception as e:
         print(f"❌ Erro ao configurar Gemini: {e}")
 
-    # 3. Inicializar PTB Application (Manual)
-    print("🚀 Configurando aplicação do Telegram manualmente...")
+    # 3. Inicializar PTB Application (CORREÇÃO FINAL: Usamos o builder, que sabe inicializar tudo)
+    print("🚀 Configurando aplicação do Telegram via builder...")
     
-    bot_obj = Bot(token=TELEGRAM_TOKEN) 
-    app_telegram = Application(bot=bot_obj) 
+    app_telegram = Application.builder().token(TELEGRAM_TOKEN).build()
     
     # Adiciona handlers
     app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
@@ -66,7 +66,6 @@ def setup_application():
 
 # ======== FUNÇÃO DE RESPOSTA (Assíncrona) ========
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # O Update aqui agora funciona graças à correção da importação
     if not modelo:
         await update.message.reply_text("❌ O serviço de IA (Gemini) não está configurado.")
         return
@@ -100,6 +99,8 @@ async def webhook():
 
     try:
         data = request.get_json(force=True) 
+        
+        # O process_update aceita o dicionário (JSON) diretamente
         await app_telegram.process_update(data)
 
         return "OK", 200
@@ -122,5 +123,5 @@ if __name__ == "__main__":
     
     print(f"🌍 Servidor Flask iniciando na porta {PORT}...")
     
-    # O Render usa o Gunicorn (se você configurou o render.yaml como sugerido)
+    # OBS: Gunicorn + gevent no render.yaml irá rodar esta aplicação.
     app_flask.run(host="0.0.0.0", port=PORT)
