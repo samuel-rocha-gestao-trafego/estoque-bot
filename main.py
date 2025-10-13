@@ -1,78 +1,106 @@
 import os
-import nest_asyncio
-import google.generativeai as genai
-import gspread
-from flask import Flask, request
-from google.oauth2.service_account import Credentials
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import asyncio
 import json
+import asyncio
+from flask import Flask, request, jsonify
+from telegram import Bot, Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+import google.auth.transport.requests
+import requests
+from dotenv import load_dotenv
+import google.auth
+import logging
 
-# ========= VARIÁVEIS =========
-TOKEN_TELEGRAM = os.getenv("TOKEN_TELEGRAM")
+# ==============================
+# CONFIGURAÇÕES INICIAIS
+# ==============================
+load_dotenv()
+app = Flask(__name__)
+
+TELEGRAM_TOKEN = os.getenv("TOKEN_TELEGRAM")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://estoque-bot-1.onrender.com")
 
-# ========= GOOGLE =========
+if not TELEGRAM_TOKEN:
+    print("⚠️ TOKEN_TELEGRAM não encontrado no ambiente!")
+if not GEMINI_API_KEY:
+    print("⚠️ GEMINI_API_KEY não encontrado no ambiente!")
+if not GOOGLE_CREDENTIALS:
+    print("⚠️ GOOGLE_CREDENTIALS não encontrado no ambiente!")
+
+# ==============================
+# GOOGLE SERVICES (SHEETS + CALENDAR)
+# ==============================
 try:
     creds_dict = json.loads(GOOGLE_CREDENTIALS)
-    SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/calendar"]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    gc = gspread.authorize(creds)
+    creds = service_account.Credentials.from_service_account_info(
+        creds_dict,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/calendar",
+        ],
+    )
+    sheets_service = build("sheets", "v4", credentials=creds)
+    calendar_service = build("calendar", "v3", credentials=creds)
     print("✅ Conectado ao Google (Planilhas + Calendário)")
 except Exception as e:
     print("❌ Erro ao conectar ao Google:", e)
 
-# ========= GEMINI =========
-try:
-    genai.configure(api_key=GEMINI_API_KEY)
-    modelo = genai.GenerativeModel("gemini-1.5-flash")
-    print("✅ Gemini configurado com sucesso.")
-except Exception as e:
-    print("❌ Erro ao configurar Gemini:", e)
-
-# ========= TELEGRAM =========
-nest_asyncio.apply()
-app_telegram = Application.builder().token(TOKEN_TELEGRAM).build()
-
-# === Handlers ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Olá! Seu bot está ativo no Render com webhook e pronto para conversar.")
-
-async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text
+# ==============================
+# GEMINI (IA)
+# ==============================
+def gerar_resposta_gemini(texto_usuario):
     try:
-        resposta = modelo.generate_content(f"Usuário disse: {texto}")
-        await update.message.reply_text(resposta.text)
+        url = "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent"
+        headers = {"Content-Type": "application/json"}
+        payload = {"contents": [{"parts": [{"text": texto_usuario}]}]}
+        params = {"key": GEMINI_API_KEY}
+        response = requests.post(url, headers=headers, params=params, json=payload)
+        data = response.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao responder: {e}")
+        print("Erro Gemini:", e)
+        return "Desculpe, ocorreu um erro ao gerar a resposta."
 
-app_telegram.add_handler(CommandHandler("start", start))
+print("✅ Gemini configurado com sucesso.")
+
+# ==============================
+# TELEGRAM BOT
+# ==============================
+bot = Bot(token=TELEGRAM_TOKEN)
+app_telegram = Application.builder().token(TELEGRAM_TOKEN).build()
+
+async def responder(update: Update, context):
+    texto_usuario = update.message.text
+    resposta = gerar_resposta_gemini(texto_usuario)
+    await update.message.reply_text(resposta)
+
 app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
 
-# ========= FLASK (WEBHOOK) =========
-server = Flask(__name__)
-
-@server.route("/")
-def home():
-    return "✅ Bot ativo via Webhook!"
-
-@server.route(f"/webhook/{TOKEN_TELEGRAM}", methods=["POST"])
+# ==============================
+# WEBHOOK FLASK
+# ==============================
+@app.route(f"/webhook/{TELEGRAM_TOKEN}", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), app_telegram.bot)
-    asyncio.create_task(app_telegram.process_update(update))
+    try:
+        update = Update.de_json(request.get_json(force=True), bot)
+        asyncio.run(app_telegram.process_update(update))
+    except Exception as e:
+        print(f"❌ Erro ao processar update: {e}")
+        return "Erro", 500
     return "ok", 200
 
-# ========= INICIALIZAÇÃO =========
-async def configurar_webhook():
-    webhook_url = f"{RENDER_URL}/webhook/{TOKEN_TELEGRAM}"
-    await app_telegram.bot.set_webhook(url=webhook_url)
-    print(f"🌐 Webhook configurado em: {webhook_url}")
 
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({"status": "Bot de estoque ativo 🚀"})
+
+
+# ==============================
+# MAIN
+# ==============================
 if __name__ == "__main__":
-    asyncio.run(configurar_webhook())
     port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Servidor Flask rodando na porta {port}")
-    server.run(host="0.0.0.0", port=port)
+    print(f"🌐 Servidor Flask rodando na porta {port}")
+    app.run(host="0.0.0.0", port=port)
