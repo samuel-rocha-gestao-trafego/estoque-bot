@@ -1,71 +1,89 @@
+# ================================================================
+# ASSISTENTE DE ESTOQUE IA (Telegram + Gemini + Google Sheets)
+# Versão compatível com python-telegram-bot 21.6
+# ================================================================
+
 import os
-import asyncio
-import logging
-import google.generativeai as genai
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from gspread import authorize
-from google.oauth2.service_account import Credentials
 import json
+import asyncio
+import datetime
+import gspread
+import google.generativeai as genai
+from google.oauth2.service_account import Credentials
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import nest_asyncio
 
-# ========== LOGGING ==========
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+nest_asyncio.apply()
 
+# ================================================================
+# 🔍 VERIFICAÇÃO DE VARIÁVEIS DE AMBIENTE
+# ================================================================
 print("🔍 Verificando variáveis de ambiente...")
 
-# ====== VARIÁVEIS DO AMBIENTE ======
 TOKEN_TELEGRAM = os.getenv("TOKEN_TELEGRAM")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS")
 
-# ====== FALLBACK SE O TOKEN NÃO VIER ======
 if not TOKEN_TELEGRAM:
-    TOKEN_TELEGRAM = "8444243438:AAFAF_3ZLuWfFBghiP1gI4Vm54sQChO6nfs"
-    print("⚠️ TOKEN_TELEGRAM não foi encontrado no ambiente! Usando fallback local (para teste).")
-else:
-    print("✅ TOKEN_TELEGRAM encontrado com sucesso.")
+    raise RuntimeError("⚠️ Variável TOKEN_TELEGRAM não encontrada!")
+if not GEMINI_API_KEY:
+    raise RuntimeError("⚠️ Variável GEMINI_API_KEY não encontrada!")
+if not GOOGLE_CREDENTIALS_JSON:
+    raise RuntimeError("⚠️ Variável GOOGLE_CREDENTIALS não encontrada!")
 
-# ====== VERIFICAÇÃO DAS OUTRAS VARIÁVEIS ======
-if GEMINI_API_KEY:
-    print("✅ GEMINI_API_KEY carregado.")
-else:
-    print("❌ GEMINI_API_KEY não encontrado!")
+print("✅ Todas as variáveis de ambiente foram carregadas.")
 
-if GOOGLE_CREDENTIALS_JSON:
-    print("✅ GOOGLE_CREDENTIALS carregado (conteúdo omitido por segurança).")
-else:
-    print("❌ GOOGLE_CREDENTIALS não encontrado!")
+# ================================================================
+# 🔐 AUTENTICAÇÃO GOOGLE (Sheets + Calendar)
+# ================================================================
+print("✅ Conectando ao Google (Planilhas + Calendário)...")
 
-# ====== CONEXÃO GOOGLE ======
-try:
-    creds_json = json.loads(GOOGLE_CREDENTIALS_JSON)
-    creds = Credentials.from_service_account_info(creds_json, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/calendar"])
-    gc = authorize(creds)
-    print("✅ Conectado ao Google (Planilhas + Calendário)")
-except Exception as e:
-    print("❌ Falha ao conectar com o Google:", e)
+scopes = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/calendar"
+]
 
-# ====== CONEXÃO GEMINI ======
-try:
-    genai.configure(api_key=GEMINI_API_KEY)
-    print("✅ Gemini configurado com sucesso.")
-except Exception as e:
-    print("❌ Erro ao configurar Gemini:", e)
+creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDENTIALS_JSON), scopes=scopes)
+gc = gspread.authorize(creds)
 
-# ====== COMANDO /start ======
+print("✅ Conectado ao Google (Planilhas + Calendário)")
+
+# ================================================================
+# 💡 CONFIGURAÇÃO GEMINI
+# ================================================================
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
+
+# ================================================================
+# 🤖 FUNÇÕES DO BOT TELEGRAM
+# ================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot ativo e funcionando no Render!")
+    await update.message.reply_text("Olá! 👋 Eu sou seu assistente de estoque IA. Envie uma mensagem para começar!")
 
-# ====== FUNÇÃO PRINCIPAL ======
+async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto_usuario = update.message.text
+    await update.message.reply_text("⏳ Processando com IA...")
+
+    resposta = model.generate_content(f"O usuário disse: {texto_usuario}. Responda de forma breve e natural.")
+    await update.message.reply_text(resposta.text or "Não consegui gerar uma resposta agora.")
+
+# ================================================================
+# 🚀 INICIALIZAÇÃO DO BOT
+# ================================================================
 async def main():
     print("🚀 Inicializando bot...")
-    try:
-        app = ApplicationBuilder().token(TOKEN_TELEGRAM).build()
-        app.add_handler(CommandHandler("start", start))
-        print("✅ Bot inicializado com sucesso! Aguardando mensagens...")
-        await app.run_polling()
-    except Exception as e:
-        print(f"❌ Erro ao iniciar o bot: {e}")
+    app = Application.builder().token(TOKEN_TELEGRAM).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
+
+    print("🤖 Bot em execução. Aguardando mensagens...")
+    await app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"❌ Erro ao iniciar: {e}")
