@@ -6,6 +6,7 @@ google-auth-oauthlib
 google-auth-httplib2
 requests
 python-dotenv
-nest_asyncio
 google-generativeai
 gspread
+gunicorn  # Adicionado!
+gevent    # Adicionado!
