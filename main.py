@@ -27,7 +27,7 @@ except Exception as e:
 # ========= GEMINI =========
 try:
     genai.configure(api_key=GEMINI_API_KEY)
-    modelo = genai.GenerativeModel("gemini-1.5-flash")
+    modelo = genai.GenerativeModel("gemini-2.5-flash")
     print("✅ Gemini configurado com sucesso.")
 except Exception as e:
     print("❌ Erro ao configurar Gemini:", e)
