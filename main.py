@@ -1,89 +1,177 @@
-# ================================================================
-# ASSISTENTE DE ESTOQUE IA (Telegram + Gemini + Google Sheets)
-# Versão compatível com python-telegram-bot 21.6
-# ================================================================
+# ======================================================
+# Assistente de Estoque IA v3.0
+# Gemini 2.5 Flash + Telegram + Google Sheets + Calendar
+# Compatível com Render (asyncio + nest_asyncio)
+# ======================================================
 
 import os
 import json
-import asyncio
 import datetime
-import gspread
-import google.generativeai as genai
-from google.oauth2.service_account import Credentials
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import asyncio
+import traceback
 import nest_asyncio
+from typing import Any, Dict
 
-nest_asyncio.apply()
+import gspread
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+import google.generativeai as genai
 
-# ================================================================
-# 🔍 VERIFICAÇÃO DE VARIÁVEIS DE AMBIENTE
-# ================================================================
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+
+# =========================
+# VERIFICA VARIÁVEIS DE AMBIENTE
+# =========================
 print("🔍 Verificando variáveis de ambiente...")
 
 TOKEN_TELEGRAM = os.getenv("TOKEN_TELEGRAM")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS")
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
+NOME_PLANILHA = os.getenv("NOME_PLANILHA", "EstoqueDepositoBebidas")
+ABA_ESTOQUE = os.getenv("ABA_ESTOQUE", "Estoque")
+ABA_MOV = os.getenv("ABA_MOV", "Movimentacoes")
+CALENDAR_ID = os.getenv("CALENDAR_ID", "")
 
 if not TOKEN_TELEGRAM:
-    raise RuntimeError("⚠️ Variável TOKEN_TELEGRAM não encontrada!")
+    print("⚠️ TOKEN_TELEGRAM não foi encontrado no ambiente! Usando fallback local (para teste).")
+
 if not GEMINI_API_KEY:
-    raise RuntimeError("⚠️ Variável GEMINI_API_KEY não encontrada!")
-if not GOOGLE_CREDENTIALS_JSON:
-    raise RuntimeError("⚠️ Variável GOOGLE_CREDENTIALS não encontrada!")
+    raise RuntimeError("❌ GEMINI_API_KEY não encontrado!")
 
-print("✅ Todas as variáveis de ambiente foram carregadas.")
+if not GOOGLE_CREDENTIALS:
+    raise RuntimeError("❌ GOOGLE_CREDENTIALS não encontrado!")
 
-# ================================================================
-# 🔐 AUTENTICAÇÃO GOOGLE (Sheets + Calendar)
-# ================================================================
-print("✅ Conectando ao Google (Planilhas + Calendário)...")
+print("✅ GEMINI_API_KEY carregado.")
+print("✅ GOOGLE_CREDENTIALS carregado (conteúdo omitido por segurança).")
 
-scopes = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/calendar"
-]
+# =========================
+# CONEXÃO GOOGLE (Sheets + Calendar)
+# =========================
+try:
+    creds_dict = json.loads(GOOGLE_CREDENTIALS)
+    scopes = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/calendar.events"
+    ]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    gc = gspread.authorize(creds)
+    calendar_service = build("calendar", "v3", credentials=creds)
+    print("✅ Conectado ao Google (Planilhas + Calendário)")
+except Exception as e:
+    raise RuntimeError(f"❌ Erro ao conectar ao Google: {e}")
 
-creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDENTIALS_JSON), scopes=scopes)
-gc = gspread.authorize(creds)
+# =========================
+# FUNÇÕES DO GOOGLE SHEETS
+# =========================
+def abrir_aba(nome_aba: str):
+    try:
+        sh = gc.open(NOME_PLANILHA)
+        ws = sh.worksheet(nome_aba)
+        return ws
+    except Exception as e:
+        raise RuntimeError(f"Erro ao abrir aba '{nome_aba}': {e}")
 
-print("✅ Conectado ao Google (Planilhas + Calendário)")
+def obter_saldo(produto: str) -> Dict[str, Any]:
+    ws = abrir_aba(ABA_ESTOQUE)
+    rows = ws.get_all_records()
+    for r in rows:
+        if produto.lower() in str(r.get("Produto", "")).lower():
+            qtd = int(r.get("Quantidade", 0))
+            return {"status": "sucesso", "produto": r.get("Produto"), "quantidade": qtd}
+    return {"status": "erro", "mensagem": f"Produto '{produto}' não encontrado."}
 
-# ================================================================
-# 💡 CONFIGURAÇÃO GEMINI
-# ================================================================
+def registrar_movimentacao(produto, quantidade, tipo, responsavel="", observacao=""):
+    ws = abrir_aba(ABA_MOV)
+    agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ws.append_row([agora, produto, quantidade, tipo, responsavel, observacao])
+    return {"status": "sucesso", "mensagem": "Movimentação registrada"}
+
+def atualizar_saldo(produto, quantidade, acao, responsavel="", observacao=""):
+    ws = abrir_aba(ABA_ESTOQUE)
+    rows = ws.get_all_records()
+    produto = produto.strip()
+    for i, r in enumerate(rows, start=2):
+        if produto.lower() in str(r.get("Produto", "")).lower():
+            atual = int(r.get("Quantidade", 0))
+            if acao.lower() in ["compra", "entrada", "in"]:
+                novo = atual + quantidade
+                tipo = "Entrada"
+            elif acao.lower() in ["venda", "saida", "out"]:
+                novo = atual - quantidade
+                tipo = "Saída"
+            else:
+                novo = atual + quantidade
+                tipo = acao
+            ws.update_cell(i, 2, novo)
+            registrar_movimentacao(produto, quantidade, tipo, responsavel, observacao)
+            return {"status": "sucesso", "novo_saldo": novo}
+    ws.append_row([produto, quantidade, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    registrar_movimentacao(produto, quantidade, acao, responsavel, observacao)
+    return {"status": "sucesso", "mensagem": "Produto adicionado."}
+
+def registrar_evento_calendar(titulo, descricao, data, hora, duracao_minutos=60):
+    try:
+        dt = datetime.datetime.strptime(f"{data} {hora}", "%Y-%m-%d %H:%M")
+        inicio = dt.isoformat()
+        fim = (dt + datetime.timedelta(minutes=duracao_minutos)).isoformat()
+        evento = {
+            "summary": titulo,
+            "description": descricao,
+            "start": {"dateTime": inicio, "timeZone": "America/Sao_Paulo"},
+            "end": {"dateTime": fim, "timeZone": "America/Sao_Paulo"},
+        }
+        ev = calendar_service.events().insert(calendarId=CALENDAR_ID, body=evento).execute()
+        return {"status": "sucesso", "mensagem": f"Evento criado: {ev.get('summary')}"}
+    except Exception as e:
+        return {"status": "erro", "mensagem": str(e)}
+
+# =========================
+# CONFIGURAÇÃO GEMINI
+# =========================
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+print("✅ Gemini configurado com sucesso.")
 
-# ================================================================
-# 🤖 FUNÇÕES DO BOT TELEGRAM
-# ================================================================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Olá! 👋 Eu sou seu assistente de estoque IA. Envie uma mensagem para começar!")
+SYSTEM_INSTRUCTION = (
+    "Você é o 'ESTOQUE BOT', um assistente de controle de estoque integrado ao Google Sheets e Calendar. "
+    "Pode registrar compras, vendas, consultar saldo e agendar eventos."
+)
 
+model = genai.GenerativeModel(
+    model_name="gemini-2.5-flash",
+    system_instruction=SYSTEM_INSTRUCTION,
+)
+
+# =========================
+# HANDLER TELEGRAM
+# =========================
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto_usuario = update.message.text
-    await update.message.reply_text("⏳ Processando com IA...")
+    try:
+        texto = update.message.text
+        user = update.effective_user.first_name
+        print(f"💬 [{user}] {texto}")
+        response = model.generate_content(texto)
+        await update.message.reply_text(response.text)
+    except Exception as e:
+        await update.message.reply_text(f"Erro: {e}")
+        print("❌ Erro no handler:", e)
 
-    resposta = model.generate_content(f"O usuário disse: {texto_usuario}. Responda de forma breve e natural.")
-    await update.message.reply_text(resposta.text or "Não consegui gerar uma resposta agora.")
-
-# ================================================================
-# 🚀 INICIALIZAÇÃO DO BOT
-# ================================================================
+# =========================
+# MAIN
+# =========================
 async def main():
     print("🚀 Inicializando bot...")
     app = Application.builder().token(TOKEN_TELEGRAM).build()
-
-    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-
-    print("🤖 Bot em execução. Aguardando mensagens...")
     await app.run_polling()
+    print("✅ Bot rodando...")
 
 if __name__ == "__main__":
+    import nest_asyncio
+    nest_asyncio.apply()
     try:
-        asyncio.run(main())
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main())
     except Exception as e:
-        print(f"❌ Erro ao iniciar: {e}")
+        print(f"❌ Erro ao iniciar o bot: {e}")
