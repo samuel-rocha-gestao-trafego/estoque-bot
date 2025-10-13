@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 from flask import Flask, request
-from telegram import Bot # Importa o objeto Bot explicitamente
+from telegram import Bot, Update # <<< CORREÇÃO AQUI
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 import google.generativeai as genai
 import gspread
@@ -16,7 +16,7 @@ app_telegram = None
 modelo = None
 gspread_client = None
 
-# ======== FUNÇÃO DE SETUP (Síncrona) - Versão 4.0 ========
+# ======== FUNÇÃO DE SETUP (Síncrona) - Versão 5.0 ========
 def setup_application():
     global app_telegram, modelo, gspread_client
     
@@ -33,7 +33,7 @@ def setup_application():
     if not GOOGLE_CREDENTIALS_JSON:
         raise RuntimeError("❌ GOOGLE_CREDENTIALS ausente.")
 
-    # 1. Conexão com Google (mantido)
+    # 1. Conexão com Google
     try:
         google_creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = Credentials.from_service_account_info(
@@ -45,7 +45,7 @@ def setup_application():
     except Exception as e:
         print(f"❌ Erro ao conectar ao Google: {e}")
 
-    # 2. Configurar Gemini (mantido)
+    # 2. Configurar Gemini
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         modelo = genai.GenerativeModel("gemini-1.5-flash")
@@ -53,13 +53,10 @@ def setup_application():
     except Exception as e:
         print(f"❌ Erro ao configurar Gemini: {e}")
 
-    # 3. Inicializar PTB Application (CORREÇÃO)
+    # 3. Inicializar PTB Application (Manual)
     print("🚀 Configurando aplicação do Telegram manualmente...")
     
-    # Criamos o objeto Bot explicitamente
     bot_obj = Bot(token=TELEGRAM_TOKEN) 
-
-    # Criamos o Application, passando o bot explicitamente
     app_telegram = Application(bot=bot_obj) 
     
     # Adiciona handlers
@@ -68,9 +65,8 @@ def setup_application():
 
 
 # ======== FUNÇÃO DE RESPOSTA (Assíncrona) ========
-# Mantida inalterada
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (lógica de resposta)
+    # O Update aqui agora funciona graças à correção da importação
     if not modelo:
         await update.message.reply_text("❌ O serviço de IA (Gemini) não está configurado.")
         return
@@ -104,8 +100,6 @@ async def webhook():
 
     try:
         data = request.get_json(force=True) 
-        
-        # O process_update aceita o dicionário (JSON) diretamente
         await app_telegram.process_update(data)
 
         return "OK", 200
@@ -123,17 +117,10 @@ if __name__ == "__main__":
         print(f"❌ Falha crítica na configuração: {e}")
         exit(1)
         
-    # 2. Início do Servidor Flask
+    # 2. Início do Servidor Flask (com Gunicorn no render.yaml)
     PORT = int(os.environ.get("PORT", 8080))
     
     print(f"🌍 Servidor Flask iniciando na porta {PORT}...")
     
-    # Se você está seguindo a sugestão do Gunicorn (melhor opção):
-    # O comando de start (no render.yaml) deve ser:
-    # gunicorn --bind 0.0.0.0:$PORT -w 4 main:app_flask --worker-class gevent
-
-    # Se você ainda está testando com 'python main.py':
-    # app_flask.run(host="0.0.0.0", port=PORT)
-    
-    # Recomendação: Use o Gunicorn e mude o startCommand no Render.
+    # O Render usa o Gunicorn (se você configurou o render.yaml como sugerido)
     app_flask.run(host="0.0.0.0", port=PORT)
