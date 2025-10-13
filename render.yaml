@@ -3,4 +3,5 @@ services:
     name: estoque-bot
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    # Usa Gunicorn com worker assíncrono (gevent) para suportar a rota 'async def webhook()'
+    startCommand: gunicorn --bind 0.0.0.0:$PORT -w 4 main:app_flask --worker-class gevent
