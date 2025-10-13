@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 from flask import Flask, request
-from telegram import Update
+from telegram import Bot # Importa o objeto Bot explicitamente
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 import google.generativeai as genai
 import gspread
@@ -11,13 +11,12 @@ from google.oauth2.service_account import Credentials
 # Inicializa Flask
 app_flask = Flask(__name__)
 
-# Variável global para a aplicação do Telegram
+# Variáveis globais
 app_telegram = None 
 modelo = None
 gspread_client = None
 
-# ======== FUNÇÃO DE SETUP (Síncrona) ========
-# Configura o ambiente, conexões e o app_telegram
+# ======== FUNÇÃO DE SETUP (Síncrona) - Versão 4.0 ========
 def setup_application():
     global app_telegram, modelo, gspread_client
     
@@ -34,7 +33,7 @@ def setup_application():
     if not GOOGLE_CREDENTIALS_JSON:
         raise RuntimeError("❌ GOOGLE_CREDENTIALS ausente.")
 
-    # 1. Conexão com Google
+    # 1. Conexão com Google (mantido)
     try:
         google_creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = Credentials.from_service_account_info(
@@ -46,7 +45,7 @@ def setup_application():
     except Exception as e:
         print(f"❌ Erro ao conectar ao Google: {e}")
 
-    # 2. Configurar Gemini
+    # 2. Configurar Gemini (mantido)
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         modelo = genai.GenerativeModel("gemini-1.5-flash")
@@ -54,9 +53,14 @@ def setup_application():
     except Exception as e:
         print(f"❌ Erro ao configurar Gemini: {e}")
 
-    # 3. Inicializar PTB Application (SEM chamar métodos de run ou webhook)
-    print("🚀 Configurando aplicação do Telegram...")
-    app_telegram = Application.builder().token(TELEGRAM_TOKEN).build()
+    # 3. Inicializar PTB Application (CORREÇÃO)
+    print("🚀 Configurando aplicação do Telegram manualmente...")
+    
+    # Criamos o objeto Bot explicitamente
+    bot_obj = Bot(token=TELEGRAM_TOKEN) 
+
+    # Criamos o Application, passando o bot explicitamente
+    app_telegram = Application(bot=bot_obj) 
     
     # Adiciona handlers
     app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
@@ -64,8 +68,9 @@ def setup_application():
 
 
 # ======== FUNÇÃO DE RESPOSTA (Assíncrona) ========
+# Mantida inalterada
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # A lógica de resposta permanece a mesma
+    # ... (lógica de resposta)
     if not modelo:
         await update.message.reply_text("❌ O serviço de IA (Gemini) não está configurado.")
         return
@@ -86,7 +91,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"❌ Erro ao responder: {e}")
         await update.message.reply_text("❌ Ocorreu um erro ao processar sua mensagem.")
 
-# ======== FLASK (WEBHOOK - Assíncrono com APLICAÇÃO) ========
+# ======== FLASK (WEBHOOK - Assíncrono) ========
 @app_flask.route("/", methods=["GET"])
 def home():
     return "🤖 Bot do Telegram está ativo no Render!"
@@ -98,11 +103,9 @@ async def webhook():
         return "Servidor em inicialização", 503 
 
     try:
-        # Recebe o JSON da requisição do Telegram
         data = request.get_json(force=True) 
         
-        # Processa a atualização do Telegram de forma assíncrona
-        # Note que passamos o dicionário de dados (JSON)
+        # O process_update aceita o dicionário (JSON) diretamente
         await app_telegram.process_update(data)
 
         return "OK", 200
@@ -125,13 +128,12 @@ if __name__ == "__main__":
     
     print(f"🌍 Servidor Flask iniciando na porta {PORT}...")
     
-    # A função `webhook` é agora `async`, o que exige um servidor compatível.
-    # Para o Render Worker, usaremos Gunicorn + Uvicorn/Gevemt para garantir o suporte.
-    # Se você ainda estiver usando 'python main.py', o Flask embutido pode ter problemas.
-    #
+    # Se você está seguindo a sugestão do Gunicorn (melhor opção):
     # O comando de start (no render.yaml) deve ser:
     # gunicorn --bind 0.0.0.0:$PORT -w 4 main:app_flask --worker-class gevent
-    # (Ou mude para o Gunicorn + Uvicorn)
 
-    # Por enquanto, rodaremos o Flask síncrono, mas o Gunicorn é o mais indicado!
+    # Se você ainda está testando com 'python main.py':
+    # app_flask.run(host="0.0.0.0", port=PORT)
+    
+    # Recomendação: Use o Gunicorn e mude o startCommand no Render.
     app_flask.run(host="0.0.0.0", port=PORT)
