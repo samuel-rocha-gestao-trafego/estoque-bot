@@ -1,8 +1,9 @@
 services:
-  - type: worker
+  - type: web
     name: estoque-bot
     runtime: python
     buildCommand: pip install -r requirements.txt
-    # CRÍTICO: Usa Gunicorn com worker assíncrono (gevent) para suportar a rota 'async def webhook()'.
-    # 'main:app_flask' instrui o Gunicorn a carregar a variável 'app_flask' do arquivo 'main.py'.
-    startCommand: gunicorn --bind 0.0.0.0:$PORT -w 4 main:app_flask --worker-class gevent
+    startCommand: gunicorn --bind 0.0.0.0:$PORT main:app_flask --worker-class gevent --workers 1
+    envVars:
+      - key: PORT
+        value: 10000
