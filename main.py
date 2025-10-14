@@ -1,50 +1,45 @@
 import os
-import json
 from flask import Flask, request
 import requests
 
 app = Flask(__name__)
 
-# Pega o token do ambiente, sem deixar visível
+# 🔐 Lê o token do Telegram da variável de ambiente
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 @app.route('/')
 def home():
-    return "✅ Bot ativo e aguardando mensagens."
+    return "🤖 Bot de Estoque ativo!", 200
 
-@app.route(f'/webhook', methods=['POST'])
+@app.route(f"/webhook", methods=["POST"])
 def webhook():
-    try:
-        data = request.get_json(force=True)
-        app.logger.info(f"📩 Recebido do Telegram: {json.dumps(data, indent=2)}")
+    data = request.get_json()
 
-        if "message" not in data:
-            return "Sem mensagem válida", 200
+    # Apenas para debug
+    print("📩 Atualização recebida:", data)
 
+    if "message" in data:
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
 
+        # Monta uma resposta simples
         resposta = f"Você disse: {text}"
+
+        # Envia resposta pro Telegram
         enviar_mensagem(chat_id, resposta)
 
-        return "OK", 200
-
-    except Exception as e:
-        app.logger.error(f"❌ Erro no webhook: {str(e)}", exc_info=True)
-        return "Erro interno", 500
+    return "ok", 200
 
 
 def enviar_mensagem(chat_id, texto):
-    try:
-        url = f"{TELEGRAM_URL}/sendMessage"
-        payload = {"chat_id": chat_id, "text": texto}
-        response = requests.post(url, json=payload)
-        app.logger.info(f"📤 Enviando resposta: {response.text}")
-    except Exception as e:
-        app.logger.error(f"❌ Falha ao enviar mensagem: {str(e)}", exc_info=True)
+    """Envia mensagem via API do Telegram"""
+    url = f"{BASE_URL}/sendMessage"
+    payload = {"chat_id": chat_id, "text": texto}
+    requests.post(url, json=payload)
 
 
-if __name__ == '__main__':
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+if __name__ == "__main__":
+    PORT = int(os.getenv("PORT", 10000))
+    print(f"🌍 Servidor Flask iniciado na porta {PORT}...")
+    app.run(host="0.0.0.0", port=PORT)
