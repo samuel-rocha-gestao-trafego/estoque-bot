@@ -1,45 +1,59 @@
 import os
-from flask import Flask, request
 import requests
+from flask import Flask, request
 
 app = Flask(__name__)
 
-# 🔐 Lê o token do Telegram da variável de ambiente
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 @app.route('/')
 def home():
-    return "🤖 Bot de Estoque ativo!", 200
+    return "🤖 Bot de Estoque está ativo!", 200
 
-@app.route(f"/webhook", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.get_json()
+    update = request.get_json()
+    print("📩 Update recebido:", update)  # <-- debug no log Render
 
-    # Apenas para debug
-    print("📩 Atualização recebida:", data)
+    message = None
+    chat_id = None
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+    # Detecta a mensagem de forma mais ampla
+    if "message" in update:
+        message = update["message"]
+    elif "edited_message" in update:
+        message = update["edited_message"]
+    elif "channel_post" in update:
+        message = update["channel_post"]
 
-        # Monta uma resposta simples
-        resposta = f"Você disse: {text}"
+    # Se encontrou mensagem, tenta responder
+    if message:
+        chat_id = message["chat"]["id"]
+        text = message.get("text", "")
 
-        # Envia resposta pro Telegram
+        print(f"💬 Mensagem recebida de {chat_id}: {text}")
+
+        # Teste: responde simples
+        if text:
+            resposta = f"👋 Oi! Você me disse: {text}"
+        else:
+            resposta = "Recebi algo, mas não consegui ler o texto 😅"
+
         enviar_mensagem(chat_id, resposta)
 
     return "ok", 200
 
 
 def enviar_mensagem(chat_id, texto):
-    """Envia mensagem via API do Telegram"""
+    """Função para enviar mensagens"""
     url = f"{BASE_URL}/sendMessage"
     payload = {"chat_id": chat_id, "text": texto}
-    requests.post(url, json=payload)
+    r = requests.post(url, json=payload)
+    print("📤 Enviando resposta:", r.text)
 
 
-if __name__ == "__main__":
-    PORT = int(os.getenv("PORT", 10000))
-    print(f"🌍 Servidor Flask iniciado na porta {PORT}...")
-    app.run(host="0.0.0.0", port=PORT)
+if __name__ == '__main__':
+    port = int(os.getenv('PORT', 10000))
+    print(f"🚀 Servidor Flask rodando na porta {port}")
+    app.run(host='0.0.0.0', port=port)
