@@ -1,13 +1,6 @@
-Flask[async]
-python-telegram-bot==21.6
-google-api-python-client
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-requests
-python-dotenv
+python-telegram-bot==20.8
 google-generativeai
 gspread
-gunicorn  # Servidor WSGI/ASGI de produção
-gevent    # Worker assíncrono para Gunicorn
-tinydb==4.8.2
+oauth2client
+google-api-python-client
+nest_asyncio
