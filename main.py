@@ -1,5 +1,5 @@
 # ============================================================
-# 🤖 Assistente de Estoque IA v2.3 - Estrutura Segura para Render (Worker)
+# 🤖 Assistente de Estoque IA v2.4 - Estrutura Segura para Render (Worker)
 # Gemini 2.5 Flash + Telegram + Google Sheets + Google Calendar
 # ============================================================
 
@@ -14,7 +14,8 @@ from typing import Any, Dict
 
 # Importações de terceiros
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+# MUDANÇA CRUCIAL: Trocamos oauth2client por google.oauth2 (a biblioteca moderna)
+from google.oauth2 import service_account 
 from googleapiclient.discovery import build
 import google.generativeai as genai
 
@@ -42,6 +43,7 @@ MEMORY_FOLDER = "/tmp/memory_users" # Usamos /tmp no Render para armazenamento e
 
 # 1. Checa se as variáveis críticas estão definidas
 if not all([TOKEN_TELEGRAM, GEMINI_API_KEY, GOOGLE_CREDENTIALS_JSON, CALENDAR_ID]):
+    # Corrigido GOOGLE_CREDENTIALS para GOOGLE_CREDENTIALS_JSON
     raise ValueError("❌ ERRO DE CONFIGURAÇÃO: Verifique as variáveis de ambiente (TELEGRAM_TOKEN, GEMINI_API_KEY, CALENDAR_ID, GOOGLE_CREDENTIALS_JSON) no Render.")
 
 os.makedirs(MEMORY_FOLDER, exist_ok=True)
@@ -56,15 +58,21 @@ SCOPES = [
 ]
 
 try:
-    # Transforma a string JSON em um objeto Python e autentica diretamente
+    # Transforma a string JSON em um objeto Python
     creds_info = json.loads(GOOGLE_CREDENTIALS_JSON)
-    creds = ServiceAccountCredentials.from_service_account_info(creds_info, SCOPES)
+    
+    # --- MUDANÇA CRUCIAL: USANDO service_account.Credentials ---
+    # Cria o objeto de credenciais usando a biblioteca google-auth moderna
+    creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+    
+    # gspread ainda pode ser autorizado com o objeto de credenciais moderno
     gc = gspread.authorize(creds)
     calendar_service = build('calendar', 'v3', credentials=creds)
     print("✅ Conectado ao Google (Sheets + Calendar) via Variavel de Ambiente.")
 except Exception as e:
     print(f"❌ Erro ao conectar ao Google. Verifique a variável GOOGLE_CREDENTIALS_JSON: {e}")
-    raise
+    # Esta linha deve ser mantida para que o Render encerre a implantação em caso de erro
+    raise 
 
 def abrir_aba(nome_aba: str):
     """Abre a aba (Worksheet) e lança erro informativo se não existir."""
@@ -398,7 +406,7 @@ async def main():
     app = ApplicationBuilder().token(TOKEN_TELEGRAM).build()
     # Adiciona o handler para todas as mensagens de texto que não são comandos
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    print("🤖 Assistente de Estoque IA v2.3 rodando como Worker (Polling).")
+    print("🤖 Assistente de Estoque IA v2.4 rodando como Worker (Polling).")
     # O Polling mantém a conexão aberta, ideal para Workers de background
     await app.run_polling()
 
