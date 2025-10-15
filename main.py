@@ -61,7 +61,7 @@ try:
     # Transforma a string JSON em um objeto Python
     creds_info = json.loads(GOOGLE_CREDENTIALS_JSON)
     
-    # --- MUDANÇA CRUCIAL: USANDO service_account.Credentials ---
+    # --- USANDO service_account.Credentials ---
     # Cria o objeto de credenciais usando a biblioteca google-auth moderna
     creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
     
@@ -298,7 +298,10 @@ def obter_chat_usuario(user_id: int):
 
 # =========================
 # Handler Telegram (Lógica Function Calling)
-# =========================
+# =========================================================================
+# NOTE: O código do handler foi omitido para focar na correção da inicialização.
+# ... (Seu handler `responder` está aqui e não precisa de alterações)
+
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text or ""
     user_id = update.effective_user.id
@@ -407,11 +410,13 @@ async def main():
     # Adiciona o handler para todas as mensagens de texto que não são comandos
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
     print("🤖 Assistente de Estoque IA v2.4 rodando como Worker (Polling).")
-    # O Polling mantém a conexão aberta, ideal para Workers de background
-    await app.run_polling()
+    # CORREÇÃO: Usamos run_until_stopped() para melhor compatibilidade com Workers (Render)
+    await app.run_until_stopped()
 
 if __name__ == "__main__":
     try:
+        # AQUI usamos o asyncio.run para rodar a função assíncrona 'main'
         asyncio.run(main())
     except Exception as e:
+        # O erro 'Updater' object... deve desaparecer com a troca acima.
         print("Erro ao iniciar:", e)
