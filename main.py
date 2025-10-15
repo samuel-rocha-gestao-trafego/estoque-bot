@@ -1,112 +1,166 @@
 import os
 import json
-import requests
-from flask import Flask, request
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+import datetime
+import traceback
+from flask import Flask, request, Response
+from tinydb import TinyDB, Query
 import google.generativeai as genai
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-# ============================================================
-# 🔧 Configurações iniciais
-# ============================================================
+# ==========================
+# CONFIGURAÇÕES INICIAIS
+# ==========================
+from dotenv import load_dotenv
+load_dotenv()
 
-# Variáveis de ambiente (Render → Environment)
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not TELEGRAM_TOKEN:
-    raise ValueError("❌ Variável TELEGRAM_TOKEN não definida no Render!")
-if not GOOGLE_CREDENTIALS:
-    raise ValueError("❌ Variável GOOGLE_CREDENTIALS não definida no Render!")
-if not GEMINI_API_KEY:
-    raise ValueError("❌ Variável GEMINI_API_KEY não definida no Render!")
-
-# Inicializa Flask
 app = Flask(__name__)
 
-# Configura Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash")
+# Variáveis do ambiente
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS")
+NOME_PLANILHA = "EstoqueDepositoBebidas"
 
-# Cria cliente Google
-creds = service_account.Credentials.from_service_account_info(json.loads(GOOGLE_CREDENTIALS))
-sheets_service = build("sheets", "v4", credentials=creds)
-calendar_service = build("calendar", "v3", credentials=creds)
+# Banco de memória local
+db = TinyDB("memoria.json")
 
-# IDs das planilhas e calendários (opcional: também podem vir das envs)
-SHEET_ID = os.getenv("ABA_ESTOQUE")
-CALENDAR_ID = os.getenv("CALENDAR_ID")
+# ==========================
+# CONFIGURAÇÃO GOOGLE SHEETS
+# ==========================
+if not GOOGLE_CREDENTIALS_JSON:
+    raise ValueError("❌ Variável GOOGLE_CREDENTIALS não encontrada no ambiente.")
 
+try:
+    google_creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+    SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds_dict, SCOPES)
+    gc = gspread.authorize(creds)
+    planilha = gc.open(NOME_PLANILHA)
+    aba_estoque = planilha.worksheet("Estoque")
+    aba_mov = planilha.worksheet("Movimentacoes")
+    print(f"✅ Conectado à planilha '{NOME_PLANILHA}' com sucesso.")
+except Exception as e:
+    print(f"❌ Erro ao conectar à planilha '{NOME_PLANILHA}': {e}")
+    aba_estoque = None
+    aba_mov = None
 
-# ============================================================
-# 🔹 Funções auxiliares
-# ============================================================
+# ==========================
+# CONFIG GEMINI
+# ==========================
+if not GEMINI_API_KEY:
+    print("🚨 GEMINI_API_KEY não encontrada. Configure nas variáveis de ambiente.")
+else:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-flash",
+        system_instruction=(
+            "Você é o 'Assistente de Estoque IA'. Ajuda o usuário a gerenciar estoque, "
+            "registrar entradas e saídas e consultar saldos. "
+            "Use linguagem natural e mantenha as respostas curtas e diretas."
+        ),
+    )
+    print("✅ Gemini configurado com sucesso.")
 
-def enviar_mensagem(chat_id, texto):
-    """Envia mensagem de texto ao usuário pelo Telegram"""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": chat_id, "text": texto}
-    requests.post(url, json=data)
+# ==========================
+# FUNÇÕES DE NEGÓCIO (Sheets)
+# ==========================
+def obter_saldo(produto: str):
+    if not aba_estoque:
+        return {"status": "erro", "mensagem": "Aba de estoque não conectada."}
+    registros = aba_estoque.get_all_records()
+    for item in registros:
+        nome = str(item.get("Produto", "")).strip()
+        if produto.lower() in nome.lower():
+            qtd = int(item.get("Quantidade", 0))
+            return {"status": "sucesso", "produto": nome, "quantidade": qtd}
+    return {"status": "vazio", "mensagem": f"{produto} não encontrado."}
 
+def registrar_movimentacao(produto, quantidade, tipo, responsavel="", observacao=""):
+    if not aba_mov:
+        return {"status": "erro", "mensagem": "Aba de movimentações não conectada."}
+    agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    linha = [agora, produto, quantidade, tipo, responsavel, observacao]
+    aba_mov.append_row(linha)
+    return {"status": "sucesso", "mensagem": f"Movimentação registrada: {tipo} de {quantidade}x {produto}"}
 
-def processar_mensagem(usuario, texto):
-    """Usa o Gemini para interpretar e decidir o que fazer"""
-    try:
-        prompt = f"""
-        Você é um assistente de controle de estoque e agenda.
-        O usuário disse: "{texto}"
+def atualizar_saldo(produto, quantidade, acao, responsavel="", observacao=""):
+    if not aba_estoque:
+        return {"status": "erro", "mensagem": "Aba de estoque não conectada."}
+    registros = aba_estoque.get_all_records()
+    encontrado = False
+    for idx, item in enumerate(registros, start=2):
+        nome = str(item.get("Produto", "")).strip()
+        if produto.lower() in nome.lower():
+            atual = int(item.get("Quantidade", 0))
+            if acao.lower() in ["compra", "entrada", "in", "+"]:
+                novo = atual + int(quantidade)
+                tipo_mov = "Entrada"
+            elif acao.lower() in ["venda", "saida", "out", "-"]:
+                novo = atual - int(quantidade)
+                tipo_mov = "Saída"
+            else:
+                novo = atual + int(quantidade)
+                tipo_mov = acao.capitalize()
+            aba_estoque.update_cell(idx, 2, novo)
+            registrar_movimentacao(produto, quantidade, tipo_mov, responsavel, observacao)
+            return {"status": "sucesso", "mensagem": f"{tipo_mov} registrada. Novo saldo: {novo}"}
+    # Produto novo
+    aba_estoque.append_row([produto, int(quantidade), datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    registrar_movimentacao(produto, quantidade, "Entrada", responsavel, observacao)
+    return {"status": "sucesso", "mensagem": f"Produto '{produto}' adicionado ao estoque com {quantidade} unidades."}
 
-        - Se ele quiser adicionar, retirar ou consultar produtos, use o Google Sheets.
-        - Se for algo sobre compromissos, eventos ou horários, use o Google Calendar.
-        - Retorne uma resposta natural e clara, explicando o que foi feito.
-
-        Use um raciocínio prático, com base no contexto.
-        """
-
-        resposta = model.generate_content(prompt)
-        resposta_texto = resposta.text.strip()
-
-        # Aqui você pode personalizar o comportamento, por exemplo:
-        # - chamar funções que realmente atualizam ou consultam o Sheets
-        # - criar eventos no Calendar
-        # - retornar resultados personalizados
-        #
-        # Por enquanto, ele apenas responde com o texto da IA
-        return resposta_texto
-
-    except Exception as e:
-        return f"⚠️ Ocorreu um erro ao processar sua mensagem: {e}"
-
-
-# ============================================================
-# 🔹 Webhook do Telegram
-# ============================================================
-
+# ==========================
+# ENDPOINT TELEGRAM WEBHOOK
+# ==========================
 @app.route("/webhook", methods=["POST"])
-def webhook():
-    update = request.get_json()
+def telegram_webhook():
+    try:
+        data = request.get_json()
+        if not data or "message" not in data:
+            return Response("Sem conteúdo", status=200)
 
-    if update and "message" in update:
-        chat_id = update["message"]["chat"]["id"]
-        texto = update["message"].get("text", "")
+        user_id = data["message"]["from"]["id"]
+        text = data["message"].get("text", "")
+        print(f"📩 Mensagem recebida de {user_id}: {text}")
 
-        resposta = processar_mensagem(chat_id, texto)
-        enviar_mensagem(chat_id, resposta)
+        # Processamento de lógica
+        resposta = model.generate_content(f"O usuário disse: {text}. Ajude com ações de estoque.")
+        reply_text = resposta.text or "Não consegui gerar resposta."
 
-    return "ok", 200
+        # Enviar resposta
+        send_message(user_id, reply_text)
+        return Response("OK", status=200)
+    except Exception as e:
+        print("❌ Erro no webhook:", e, traceback.format_exc())
+        return Response("Erro interno", status=500)
 
+# ==========================
+# ENVIAR MENSAGEM TELEGRAM
+# ==========================
+import requests
 
-@app.route("/", methods=["GET"])
+def send_message(chat_id, text):
+    if not TELEGRAM_TOKEN:
+        print("🚫 TELEGRAM_TOKEN ausente.")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print("Erro ao enviar mensagem:", e)
+
+# ==========================
+# ROTA DE STATUS
+# ==========================
+@app.route("/")
 def home():
-    return "🤖 API do Assistente de Estoque está ativa!", 200
+    return "🤖 Estoque IA rodando com integração Google Sheets!"
 
-
-# ============================================================
-# 🚀 Inicialização
-# ============================================================
-
+# ==========================
+# MAIN
+# ==========================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Servidor Flask rodando na porta {port}")
-    app.run(host="0.0.0.0", port=port, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
