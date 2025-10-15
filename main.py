@@ -33,7 +33,12 @@ model = genai.GenerativeModel("gemini-2.5-flash")
 # --- CONECTA GOOGLE SHEETS ---
 try:
     creds_dict = json.loads(GOOGLE_CREDENTIALS)
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    scopes = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file"
+    ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds)
     sheet = gc.open(SHEET_NAME)
@@ -84,6 +89,7 @@ app_telegram = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app_telegram.add_handler(CommandHandler("start", start))
 app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+# --- FLASK ROUTES ---
 @app.route("/")
 def home():
     return "✅ Estoque Bot rodando!"
