@@ -1,166 +1,92 @@
 import os
 import json
-import datetime
-import traceback
-from flask import Flask, request, Response
-from tinydb import TinyDB, Query
-import google.generativeai as genai
+from flask import Flask, request
+import telegram
+from telegram.ext import CommandHandler, MessageHandler, filters, ApplicationBuilder, ContextTypes
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
+import google.generativeai as genai
+from tinydb import TinyDB, Query
 
-# ==========================
-# CONFIGURAÇÕES INICIAIS
-# ==========================
-from dotenv import load_dotenv
-load_dotenv()
+# ============================
+# Configurações iniciais
+# ============================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS")
 
+if not TELEGRAM_TOKEN or not GEMINI_API_KEY or not GOOGLE_CREDENTIALS_JSON:
+    raise ValueError("⚠️ Variáveis de ambiente ausentes (TELEGRAM_TOKEN, GEMINI_API_KEY, GOOGLE_CREDENTIALS)")
+
+# ============================
+# Configuração do Gemini 2.5 Flash
+# ============================
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-2.5-flash")
+
+# ============================
+# Configuração do Google Sheets
+# ============================
+creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+creds = Credentials.from_service_account_info(
+    creds_dict,
+    scopes=["https://www.googleapis.com/auth/spreadsheets"]
+)
+
+gc = gspread.authorize(creds)
+spreadsheet = gc.open("EstoqueDepositoBebidas")
+sheet = spreadsheet.sheet1  # primeira aba
+
+# ============================
+# Persistência de Memória
+# ============================
+db = TinyDB("memory.json")
+
+# ============================
+# Configuração do Bot do Telegram
+# ============================
+bot = telegram.Bot(token=TELEGRAM_TOKEN)
 app = Flask(__name__)
 
-# Variáveis do ambiente
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS")
-NOME_PLANILHA = "EstoqueDepositoBebidas"
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 Olá! Assistente de Estoque IA conectado com Google Sheets!")
 
-# Banco de memória local
-db = TinyDB("memoria.json")
-
-# ==========================
-# CONFIGURAÇÃO GOOGLE SHEETS
-# ==========================
-if not GOOGLE_CREDENTIALS_JSON:
-    raise ValueError("❌ Variável GOOGLE_CREDENTIALS não encontrada no ambiente.")
-
-try:
-    google_creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
-    SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds_dict, SCOPES)
-    gc = gspread.authorize(creds)
-    planilha = gc.open(NOME_PLANILHA)
-    aba_estoque = planilha.worksheet("Estoque")
-    aba_mov = planilha.worksheet("Movimentacoes")
-    print(f"✅ Conectado à planilha '{NOME_PLANILHA}' com sucesso.")
-except Exception as e:
-    print(f"❌ Erro ao conectar à planilha '{NOME_PLANILHA}': {e}")
-    aba_estoque = None
-    aba_mov = None
-
-# ==========================
-# CONFIG GEMINI
-# ==========================
-if not GEMINI_API_KEY:
-    print("🚨 GEMINI_API_KEY não encontrada. Configure nas variáveis de ambiente.")
-else:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=(
-            "Você é o 'Assistente de Estoque IA'. Ajuda o usuário a gerenciar estoque, "
-            "registrar entradas e saídas e consultar saldos. "
-            "Use linguagem natural e mantenha as respostas curtas e diretas."
-        ),
-    )
-    print("✅ Gemini configurado com sucesso.")
-
-# ==========================
-# FUNÇÕES DE NEGÓCIO (Sheets)
-# ==========================
-def obter_saldo(produto: str):
-    if not aba_estoque:
-        return {"status": "erro", "mensagem": "Aba de estoque não conectada."}
-    registros = aba_estoque.get_all_records()
-    for item in registros:
-        nome = str(item.get("Produto", "")).strip()
-        if produto.lower() in nome.lower():
-            qtd = int(item.get("Quantidade", 0))
-            return {"status": "sucesso", "produto": nome, "quantidade": qtd}
-    return {"status": "vazio", "mensagem": f"{produto} não encontrado."}
-
-def registrar_movimentacao(produto, quantidade, tipo, responsavel="", observacao=""):
-    if not aba_mov:
-        return {"status": "erro", "mensagem": "Aba de movimentações não conectada."}
-    agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    linha = [agora, produto, quantidade, tipo, responsavel, observacao]
-    aba_mov.append_row(linha)
-    return {"status": "sucesso", "mensagem": f"Movimentação registrada: {tipo} de {quantidade}x {produto}"}
-
-def atualizar_saldo(produto, quantidade, acao, responsavel="", observacao=""):
-    if not aba_estoque:
-        return {"status": "erro", "mensagem": "Aba de estoque não conectada."}
-    registros = aba_estoque.get_all_records()
-    encontrado = False
-    for idx, item in enumerate(registros, start=2):
-        nome = str(item.get("Produto", "")).strip()
-        if produto.lower() in nome.lower():
-            atual = int(item.get("Quantidade", 0))
-            if acao.lower() in ["compra", "entrada", "in", "+"]:
-                novo = atual + int(quantidade)
-                tipo_mov = "Entrada"
-            elif acao.lower() in ["venda", "saida", "out", "-"]:
-                novo = atual - int(quantidade)
-                tipo_mov = "Saída"
-            else:
-                novo = atual + int(quantidade)
-                tipo_mov = acao.capitalize()
-            aba_estoque.update_cell(idx, 2, novo)
-            registrar_movimentacao(produto, quantidade, tipo_mov, responsavel, observacao)
-            return {"status": "sucesso", "mensagem": f"{tipo_mov} registrada. Novo saldo: {novo}"}
-    # Produto novo
-    aba_estoque.append_row([produto, int(quantidade), datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-    registrar_movimentacao(produto, quantidade, "Entrada", responsavel, observacao)
-    return {"status": "sucesso", "mensagem": f"Produto '{produto}' adicionado ao estoque com {quantidade} unidades."}
-
-# ==========================
-# ENDPOINT TELEGRAM WEBHOOK
-# ==========================
-@app.route("/webhook", methods=["POST"])
-def telegram_webhook():
+async def registrar(update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        data = request.get_json()
-        if not data or "message" not in data:
-            return Response("Sem conteúdo", status=200)
+        dados = " ".join(context.args)
+        if not dados:
+            await update.message.reply_text("⚠️ Envie os dados no formato: /registrar Produto Quantidade")
+            return
 
-        user_id = data["message"]["from"]["id"]
-        text = data["message"].get("text", "")
-        print(f"📩 Mensagem recebida de {user_id}: {text}")
+        partes = dados.split()
+        produto = partes[0]
+        quantidade = partes[1] if len(partes) > 1 else "0"
 
-        # Processamento de lógica
-        resposta = model.generate_content(f"O usuário disse: {text}. Ajude com ações de estoque.")
-        reply_text = resposta.text or "Não consegui gerar resposta."
-
-        # Enviar resposta
-        send_message(user_id, reply_text)
-        return Response("OK", status=200)
+        sheet.append_row([produto, quantidade])
+        db.insert({"produto": produto, "quantidade": quantidade})
+        await update.message.reply_text(f"✅ {produto} adicionado com {quantidade} unidades.")
     except Exception as e:
-        print("❌ Erro no webhook:", e, traceback.format_exc())
-        return Response("Erro interno", status=500)
+        await update.message.reply_text(f"❌ Erro ao registrar: {e}")
 
-# ==========================
-# ENVIAR MENSAGEM TELEGRAM
-# ==========================
-import requests
+async def responder(update, context: ContextTypes.DEFAULT_TYPE):
+    mensagem = update.message.text
+    resposta = model.generate_content(mensagem).text
+    await update.message.reply_text(resposta)
 
-def send_message(chat_id, text):
-    if not TELEGRAM_TOKEN:
-        print("🚫 TELEGRAM_TOKEN ausente.")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print("Erro ao enviar mensagem:", e)
+# ============================
+# Inicialização do Telegram Bot
+# ============================
+application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("registrar", registrar))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
 
-# ==========================
-# ROTA DE STATUS
-# ==========================
 @app.route("/")
-def home():
-    return "🤖 Estoque IA rodando com integração Google Sheets!"
+def index():
+    return "🤖 Assistente de Estoque IA rodando!"
 
-# ==========================
-# MAIN
-# ==========================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.create_task(application.run_polling())
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
