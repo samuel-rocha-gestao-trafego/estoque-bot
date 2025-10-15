@@ -8,7 +8,7 @@ import os
 import json
 import datetime
 import traceback
-import nest_asyncio
+# import nest_asyncio  <-- REMOVIDO para evitar conflito
 import asyncio
 from typing import Any, Dict
 
@@ -402,7 +402,8 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # 🚀 Inicialização do Worker (Polling)
 # =========================
-nest_asyncio.apply()
+# nest_asyncio.apply() <-- REMOVIDO
+# Se estiver em um ambiente worker, o uso de asyncio.run() deve ser suficiente
 
 async def main():
     # Inicializa o bot com o token lido da variável de ambiente
@@ -410,7 +411,7 @@ async def main():
     # Adiciona o handler para todas as mensagens de texto que não são comandos
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
     print("🤖 Assistente de Estoque IA v2.4 rodando como Worker (Polling).")
-    # CORREÇÃO: Usamos run_until_stopped() para melhor compatibilidade com Workers (Render)
+    # run_until_stopped() é o método assíncrono correto para workers
     await app.run_until_stopped()
 
 if __name__ == "__main__":
@@ -418,5 +419,5 @@ if __name__ == "__main__":
         # AQUI usamos o asyncio.run para rodar a função assíncrona 'main'
         asyncio.run(main())
     except Exception as e:
-        # O erro 'Updater' object... deve desaparecer com a troca acima.
+        # O erro deve ser capturado aqui se a inicialização falhar
         print("Erro ao iniciar:", e)
