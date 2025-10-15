@@ -1,9 +1,13 @@
 services:
-  - type: web
-    name: estoque-bot
+  # Tipo: Worker. Essencial para bots que usam Polling e rodam 24/7.
+  - type: worker 
+    name: estoque-bot-worker
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT main:app_flask --worker-class gevent --workers 1
+    # O comando start agora apenas executa nosso script Python
+    startCommand: python main.py
+    # Variáveis de ambiente
     envVars:
+      # O worker não precisa da porta, mas vamos mantê-la como variável de ambiente (não está sendo usada no main.py)
       - key: PORT
-        value: 10000
+        value: 10000 
