@@ -1,59 +1,112 @@
-from flask import Flask, request
-import requests
 import os
-import logging
+import json
+import requests
+from flask import Flask, request
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+import google.generativeai as genai
 
-app = Flask(__name__)
+# ============================================================
+# 🔧 Configurações iniciais
+# ============================================================
 
-# Configuração básica de logs
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
-
-# 🔒 Token seguro (vem do Render)
+# Variáveis de ambiente (Render → Environment)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not TELEGRAM_TOKEN:
-    raise ValueError("❌ Variável TELEGRAM_TOKEN não definida nas Environment Variables do Render!")
+    raise ValueError("❌ Variável TELEGRAM_TOKEN não definida no Render!")
+if not GOOGLE_CREDENTIALS:
+    raise ValueError("❌ Variável GOOGLE_CREDENTIALS não definida no Render!")
+if not GEMINI_API_KEY:
+    raise ValueError("❌ Variável GEMINI_API_KEY não definida no Render!")
 
-# URL base da API Telegram
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+# Inicializa Flask
+app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def home():
-    return "✅ Bot do Telegram ativo no Render!"
+# Configura Gemini API
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-2.0-flash")
+
+# Cria cliente Google
+creds = service_account.Credentials.from_service_account_info(json.loads(GOOGLE_CREDENTIALS))
+sheets_service = build("sheets", "v4", credentials=creds)
+calendar_service = build("calendar", "v3", credentials=creds)
+
+# IDs das planilhas e calendários (opcional: também podem vir das envs)
+SHEET_ID = os.getenv("ABA_ESTOQUE")
+CALENDAR_ID = os.getenv("CALENDAR_ID")
+
+
+# ============================================================
+# 🔹 Funções auxiliares
+# ============================================================
+
+def enviar_mensagem(chat_id, texto):
+    """Envia mensagem de texto ao usuário pelo Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": chat_id, "text": texto}
+    requests.post(url, json=data)
+
+
+def processar_mensagem(usuario, texto):
+    """Usa o Gemini para interpretar e decidir o que fazer"""
+    try:
+        prompt = f"""
+        Você é um assistente de controle de estoque e agenda.
+        O usuário disse: "{texto}"
+
+        - Se ele quiser adicionar, retirar ou consultar produtos, use o Google Sheets.
+        - Se for algo sobre compromissos, eventos ou horários, use o Google Calendar.
+        - Retorne uma resposta natural e clara, explicando o que foi feito.
+
+        Use um raciocínio prático, com base no contexto.
+        """
+
+        resposta = model.generate_content(prompt)
+        resposta_texto = resposta.text.strip()
+
+        # Aqui você pode personalizar o comportamento, por exemplo:
+        # - chamar funções que realmente atualizam ou consultam o Sheets
+        # - criar eventos no Calendar
+        # - retornar resultados personalizados
+        #
+        # Por enquanto, ele apenas responde com o texto da IA
+        return resposta_texto
+
+    except Exception as e:
+        return f"⚠️ Ocorreu um erro ao processar sua mensagem: {e}"
+
+
+# ============================================================
+# 🔹 Webhook do Telegram
+# ============================================================
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     update = request.get_json()
-    logging.info("🟢 RAW UPDATE RECEBIDO:\n%s", update)
 
-    if not update:
-        return "Sem conteúdo", 200
-
-    # Verifica se existe mensagem
-    if "message" in update:
+    if update and "message" in update:
         chat_id = update["message"]["chat"]["id"]
-        text = update["message"].get("text", "")
-        logging.info("💬 CHAT_ID: %s", chat_id)
-        logging.info("💬 TEXTO: %s", text)
+        texto = update["message"].get("text", "")
 
-        # Resposta simples
-        resposta = f"👋 Recebi sua mensagem: {text}"
+        resposta = processar_mensagem(chat_id, texto)
+        enviar_mensagem(chat_id, resposta)
 
-        payload = {
-            "chat_id": chat_id,
-            "text": resposta
-        }
+    return "ok", 200
 
-        try:
-            r = requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
-            logging.info("📤 Enviando para Telegram: %s", payload)
-            logging.info("📬 Resposta Telegram: %s -> %s", r.status_code, r.text)
-        except Exception as e:
-            logging.error("❌ Erro ao enviar mensagem: %s", e)
 
-    return "OK", 200
+@app.route("/", methods=["GET"])
+def home():
+    return "🤖 API do Assistente de Estoque está ativa!", 200
+
+
+# ============================================================
+# 🚀 Inicialização
+# ============================================================
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    logging.info("🚀 Servidor Flask rodando na porta %s", port)
+    print(f"🚀 Servidor Flask rodando na porta {port}")
     app.run(host="0.0.0.0", port=port, debug=True)
